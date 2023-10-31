@@ -1,0 +1,288 @@
+---
+title: "Airline Passenger Satisfaction Classification"
+author: "Joaquin Sanchez Ibarra"
+format: html
+editor: visual
+---
+
+```{r}
+#knitr::purl("Airline-Passenger-Satisfaction-Classification.qmd")
+```
+
+
+Load packages.
+
+```{r}
+pacman::p_load(tidyverse, data.table, DataExplorer, missForest, caret, doParallel, foreach, e1071, car, randomForest, gbm, gt, bartMachine,skimr)
+```
+
+
+Train and test data set.
+```{r}
+df <- fread("./data/train.csv")
+test_set <- fread("./data/test.csv")
+```
+
+Data description
+```{r}
+glimpse(df)
+df %>% skim()
+```
+
+Clean data
+Replace white space with underscore
+```{r}
+colnames(df) <- gsub(c("\\s+"), "_", colnames(df)) 
+colnames(df) <-   gsub("/", "_", colnames(df))
+  
+# Can also used janitor package
+# df <- janitor::clean_names(df)
+colnames(test_set) <- gsub(c("\\s+"), "_", colnames(test_set)) 
+colnames(test_set) <-   gsub("/", "_", colnames(test_set))
+
+```
+
+
+data wrangling on training and testing dataset
+```{r}
+df1 <- df %>% 
+  select(-id) %>% 
+  slice_sample(prop = .3,replace = F) %>% 
+  mutate(Gender = as.factor(Gender),
+         Customer_Type =  as.factor(Customer_Type),
+         Type_of_Travel = as.factor(Type_of_Travel),
+         Class = factor(Class),
+         satisfaction = factor(satisfaction))
+
+test_set1 <- test_set %>% 
+  select(-V1, -id) %>% 
+  slice_sample(prop = .2,replace = F) %>% 
+  mutate(Gender = as.factor(Gender),
+         Customer_Type =  as.factor(Customer_Type),
+         Type_of_Travel = as.factor(Type_of_Travel),
+         Class = factor(Class),
+         satisfaction = factor(satisfaction))
+```
+
+
+Missing NA plot
+```{r}
+DataExplorer::plot_missing(df1)
+
+DataExplorer::plot_missing(test_set1)
+```
+
+Imputation of NA values using `missForest` package
+
+```{r, eval=F}
+rf_na <- missForest(df1,
+                    ntree = 100,
+                    variablewise = F,
+                    verbose= T,
+                    mtry = round(sqrt(ncol(df1)-1)))
+
+
+rf_na_test <- missForest(test_set1,
+                    ntree = 100,
+                    variablewise = F,
+                    verbose= T,
+                    mtry = round(sqrt(ncol(test_set1)-1)))
+
+
+```
+
+
+Results of Random forest imputations 
+```{r}
+df2 <- rf_na$ximp
+test_set2 <- rf_na_test$ximp
+```
+
+
+Sample the data since PC is not able to handle the data.
+
+One-hot encoded on factor variable
+```{r}
+set.seed(1)
+df2 <- slice_sample(df2,n = 2000)
+x <- model.matrix(satisfaction ~ ., data = df2)[,-1] 
+y <- df2$satisfaction
+```
+
+```{r}
+df2 <- data.frame(x,y) 
+colnames(df2) <-  gsub("\\.","", colnames(data.frame(cbind(x,y)) ))
+df2 <- mutate(rename(df2, "satisfaction" = "y"))
+
+plot_missing(df2)
+```
+
+
+Data manipulation on response
+```{r}
+df2$satisfaction <- factor(df2$satisfaction, levels = c("satisfied", "neutral or dissatisfied"), labels = c("satisfied", "Neutral_or_dissatisfied"))
+levels(df2$satisfaction)
+```
+
+
+
+H20 Machine learning
+```{r,echo=FALSE, eval=FALSE}
+# if ("package:h2o" %in% search()) { detach("package:h2o", unload=TRUE) }
+# if ("h2o" %in% rownames(installed.packages())) { remove.packages("h2o") }
+# 
+# pkgs <- c("RCurl","jsonlite")
+# for (pkg in pkgs) {
+#   if (! (pkg %in% rownames(installed.packages()))) { install.packages(pkg) }
+# }
+# install.packages("h2o", type="source", repos=(c("http://h2o-release.s3.amazonaws.com/h2o/latest_stable_R")))
+
+```
+
+```{r}
+library(h2o)
+```
+
+Initiate H2o AI
+```{r}
+localH2o <- h2o.init(max_mem_size = "10G")
+```
+
+Partition the dataset
+```{r}
+set.seed(1)
+index <- createDataPartition(df2$satisfaction, p = .7, list = FALSE)
+train <- df2[index,]
+validate <- df2[-index,]
+
+```
+
+
+h2o dataset
+```{r}
+train.hex <- as.h2o(train, destination_frame = "train.hex")
+validate.hex <- as.h2o(train, destination_frame = "validate.hex")
+```
+
+Select response and predictors for model
+```{r}
+colnames(train)
+response <- "satisfaction"
+predictors <- colnames(train)[-1]
+predictors <- predictors[!predictors %in% response]
+```
+
+
+```{r}
+# Run AutoML
+model <- h2o.automl(
+  x = predictors,
+  y = response,
+  training_frame = train.hex,
+  validation_frame = validate.hex,
+  max_runtime_secs = 600
+)
+
+#h2o.shutdown()
+```
+
+
+
+```{r}
+(leader <- model@leader)
+(auc <- h2o.auc(leader, train = FALSE, xval = TRUE))
+```
+
+
+Predictions
+```{r}
+test_set2$satisfaction <- factor(test_set2$satisfaction, levels = c("satisfied", "neutral or dissatisfied"), labels = c("satisfied", "Neutral_or_dissatisfied"))
+
+test_set2 |> select(satisfaction)
+```
+
+
+One-hot dummy variables
+```{r}
+test_set2
+x_test <- model.matrix(satisfaction ~ ., data = test_set2)[,-1] 
+y_test <- test_set2$satisfaction
+```
+
+```{r}
+test_set3 <- data.frame(x_test,y_test) 
+colnames(test_set3) <-  gsub("\\.","", colnames(data.frame(cbind(x_test,y_test)) ))
+test_set3 <- mutate(rename(test_set3, "satisfaction" = "y_test"))
+test_set3
+
+```
+
+```{r}
+test_set3 |> colnames()
+#Type_of_TravelPersonalTravel
+```
+
+Testing dataset as h20 dataset
+```{r}
+test.hex <- as.h2o(test_set3, destination_frame = "test.hex")
+```
+
+Confusion matrix on final model
+```{r}
+class(test.hex)
+test.hex$"satisfaction"
+
+
+fit <- model@leader
+pred <- h2o.predict(fit, test.hex)
+
+perf <- h2o.performance(fit, test.hex)
+cm <- h2o.confusionMatrix(fit, newdata = test.hex)
+cm
+
+accuracy <- (cm[1,1] + cm[2,2]) / (cm$Neutral_or_dissatisfied[3] + cm$satisfied[3])
+accuracy
+
+
+precision <-  cm[2,2] / cm$satisfied[3]
+precision
+
+recall <- cm[2,2]/ (cm[2,1] + cm[2,2]) 
+recall
+
+f1 <- 2*(precision*recall)/(precision+recall)
+f1
+
+Metric <- c("accuracy", "precision", "recall", "F1") |> str_to_title()
+Results <- c(accuracy, precision, recall, f1) |> round(digits = 3)
+
+data.frame(Metric, Results)
+
+```
+
+
+
+
+```{r}
+# Exmaple
+library(h2o)
+h2o.init()
+prostate_path <- system.file("extdata", "prostate.csv", package = "h2o")
+prostate <- h2o.uploadFile(prostate_path)
+class(prostate)
+prostate[, 2] <- as.factor(prostate[, 2])
+model <- h2o.gbm(x = 3:9, y = 2, training_frame = prostate, distribution = "bernoulli")
+h2o.confusionMatrix(model, prostate)
+# Generating a ModelMetrics object
+perf <- h2o.performance(model, prostate)
+h2o.confusionMatrix(perf)
+```
+
+
+
+
+
+
+
+
+
