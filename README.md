@@ -19,7 +19,7 @@ Next the model the predictions of satisfaction are performed on the testing data
 
 ![](./img/final_cm.png)
 
-The table below shows accuracy, precision, recall, and F1 score. Overall the model performed well in predicting satisfaction. The model can still be adjusted to improved results.
+The table below shows accuracy, precision, recall, and F1 score. Overall the model using H2O performed well in predicting satisfaction. The model can still be adjusted to improved results.
 
 ![](./img/results.png)
 
