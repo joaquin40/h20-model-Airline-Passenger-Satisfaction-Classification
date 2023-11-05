@@ -145,7 +145,7 @@ library(h2o)
 
 Initiate H2o AI
 ```{r}
-localH2o <- h2o.init(max_mem_size = "10G")
+localH2o <- h2o.init()
 ```
 
 Partition the dataset
@@ -161,7 +161,7 @@ validate <- df2[-index,]
 h2o dataset
 ```{r}
 train.hex <- as.h2o(train, destination_frame = "train.hex")
-validate.hex <- as.h2o(train, destination_frame = "validate.hex")
+ validate.hex <- as.h2o(validate, destination_frame = "validate.hex")
 ```
 
 Select response and predictors for model
